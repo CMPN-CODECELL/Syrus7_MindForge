@@ -1,0 +1,25 @@
+# Node.js
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+backend/.venv/
+ml/.venv/
+
+# Environment variables and local data
+.env
+.env.*
+!.env.example
+data/*
+!data/.gitkeep
+
+# Editors and operating systems
+.DS_Store
+.vscode/
+.idea/
