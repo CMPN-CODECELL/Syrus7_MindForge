@@ -1,0 +1,159 @@
+/**
+ * CropBazaar API Client Service
+ *
+ * Connects React frontend to FastAPI backend endpoints.
+ * Uses VITE_API_BASE_URL with fallback to http://localhost:8000.
+ */
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+async function request(endpoint, options = {}) {
+  const url = `${API_BASE_URL}${endpoint}`;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      ...options,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({}));
+      const errorMsg = errorBody.detail || `HTTP ${response.status}: ${response.statusText}`;
+      throw new Error(errorMsg);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error(`[API Error] ${endpoint}:`, error.message);
+    throw error;
+  }
+}
+
+/** Check backend health status */
+export async function fetchHealth() {
+  return request('/health');
+}
+
+/** Get dataset overview (total records, crops count, states, mandis, date range) */
+export async function fetchMarketSummary() {
+  return request('/api/market/summary');
+}
+
+/** Get list of available commodities and their pricing units */
+export async function fetchCommodities(state = null) {
+  const query = state ? `?state=${encodeURIComponent(state)}` : '';
+  return request(`/api/market/commodities${query}`);
+}
+
+/** Get list of states and districts */
+export async function fetchStates() {
+  return request('/api/market/states');
+}
+
+/** Get list of mandis optionally filtered by state, crop, and/or district */
+export async function fetchMandis({ state = null, commodity = null, district = null } = {}) {
+  const params = new URLSearchParams();
+  if (state) params.append('state', state);
+  if (commodity) params.append('commodity', commodity);
+  if (district) params.append('district', district);
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return request(`/api/market/mandis${query}`);
+}
+
+/** Get paginated raw price records */
+export async function fetchPrices({
+  commodity = null,
+  state = null,
+  market = null,
+  startDate = null,
+  endDate = null,
+  limit = 50,
+  offset = 0,
+} = {}) {
+  const params = new URLSearchParams();
+  if (commodity) params.append('commodity', commodity);
+  if (state) params.append('state', state);
+  if (market) params.append('market', market);
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  params.append('limit', limit);
+  params.append('offset', offset);
+  return request(`/api/market/prices?${params.toString()}`);
+}
+
+/** Get historical modal price and arrival trend points */
+export async function fetchMarketTrends({
+  commodity,
+  market,
+  startDate = null,
+  endDate = null,
+  limit = 100,
+}) {
+  const params = new URLSearchParams({ commodity, market });
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  if (limit) params.append('limit', limit);
+  return request(`/api/market/trends?${params.toString()}`);
+}
+
+/** Get historical arrival volume points */
+export async function fetchArrivals({
+  commodity,
+  market = null,
+  startDate = null,
+  endDate = null,
+  limit = 100,
+}) {
+  const params = new URLSearchParams({ commodity });
+  if (market) params.append('market', market);
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  if (limit) params.append('limit', limit);
+  return request(`/api/market/arrivals?${params.toString()}`);
+}
+
+/** Compare latest observed prices for a crop across APMC mandis */
+export async function fetchMandiCompare({ commodity, state = null, limit = 10 }) {
+  const params = new URLSearchParams({ commodity });
+  if (state) params.append('state', state);
+  if (limit) params.append('limit', limit);
+  return request(`/api/market/compare?${params.toString()}`);
+}
+
+/** Get historical weather records */
+export async function fetchWeatherHistory({
+  market = null,
+  startDate = null,
+  endDate = null,
+  limit = 100,
+} = {}) {
+  const params = new URLSearchParams();
+  if (market) params.append('market', market);
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  if (limit) params.append('limit', limit);
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return request(`/api/weather/history${query}`);
+}
+
+/** Get aggregated historical weather statistics */
+export async function fetchWeatherSummary({ market = null, startDate = null, endDate = null } = {}) {
+  const params = new URLSearchParams();
+  if (market) params.append('market', market);
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return request(`/api/weather/summary${query}`);
+}
+
+/** Query Kisan Vaani Gemini AI assistant */
+export async function fetchAssistantChat({ message, language = 'en', history = [] }) {
+  return request('/api/assistant/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message, language, history }),
+  });
+}
+
+
