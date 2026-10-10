@@ -2,10 +2,10 @@
  * CropBazaar API Client Service
  *
  * Connects React frontend to FastAPI backend endpoints.
- * Uses VITE_API_BASE_URL with fallback to http://localhost:8000.
+ * Uses VITE_API_BASE_URL when provided; local Vite development uses its proxy.
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 async function request(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`;
@@ -20,7 +20,10 @@ async function request(endpoint, options = {}) {
 
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({}));
-      const errorMsg = errorBody.detail || `HTTP ${response.status}: ${response.statusText}`;
+      const detail = errorBody.detail;
+      const errorMsg = typeof detail === 'string'
+        ? detail
+        : detail?.message || `HTTP ${response.status}: ${response.statusText}`;
       throw new Error(errorMsg);
     }
 
@@ -34,6 +37,40 @@ async function request(endpoint, options = {}) {
 /** Check backend health status */
 export async function fetchHealth() {
   return request('/health');
+}
+
+/** Get the crop/market pairs evaluated by the forecasting pipeline */
+export async function fetchForecastSupported() {
+  return request('/api/forecast/supported');
+}
+
+/** Get separate ML or validated-baseline forecasts for each requested horizon */
+export async function fetchForecast({ commodity, market = null, horizons = '1-7' }) {
+  const params = new URLSearchParams({ horizons });
+  if (market) params.append('market', market);
+  return request(`/api/forecast/${encodeURIComponent(commodity)}?${params.toString()}`);
+}
+
+/** Get shared ML context for BechSmart without applying recommendation logic */
+export async function fetchBechSmartRecommendation(payload) {
+  return request('/api/bechsmart/recommend', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Get scoped historical risk indicators and shared ML forecast context */
+export async function fetchJokhimRiskData({ commodity, market }) {
+  const params = new URLSearchParams({ commodity, market });
+  return request(`/api/jokhim/risk-data?${params.toString()}`);
+}
+
+/** Analyze historical risk and shared ML context for a selected crop/mandi pair */
+export async function analyzeJokhimRisk({ commodity, market }) {
+  return request('/api/jokhim/analyze', {
+    method: 'POST',
+    body: JSON.stringify({ commodity, market }),
+  });
 }
 
 /** Get dataset overview (total records, crops count, states, mandis, date range) */

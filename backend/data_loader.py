@@ -13,7 +13,10 @@ _DATASET_PATH: Optional[str] = None
 
 def find_dataset_path() -> str:
     """Locate merged_mandi_weather.csv from possible relative or absolute paths."""
+    project_root = Path(__file__).resolve().parent.parent
     candidates = [
+        # Repository root, resolved independently of the process working directory
+        project_root / "merged_mandi_weather.csv",
         # Relative to project root
         Path("data/merged_mandi_weather.csv"),
         Path("../data/merged_mandi_weather.csv"),

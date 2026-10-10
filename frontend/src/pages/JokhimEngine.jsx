@@ -14,99 +14,63 @@ import {
 import DisclaimerBanner from '../components/DisclaimerBanner';
 import Badge from '../components/Badge';
 import {
-  fetchCommodities,
-  fetchMandis,
-  fetchMarketTrends,
-  fetchWeatherSummary,
+  analyzeJokhimRisk,
+  fetchForecastSupported,
 } from '../services/api';
 
 export default function JokhimEngine() {
-  const [commodities, setCommodities] = useState([]);
+  const [supportedOptions, setSupportedOptions] = useState([]);
   const [mandis, setMandis] = useState([]);
-  const [selectedCrop, setSelectedCrop] = useState('Onion');
-  const [selectedMandi, setSelectedMandi] = useState('APMC Lasalgaon');
+  const [selectedCrop, setSelectedCrop] = useState('');
+  const [selectedMandi, setSelectedMandi] = useState('');
 
-  const [weatherSummary, setWeatherSummary] = useState(null);
-  const [trendData, setTrendData] = useState([]);
+  const [riskData, setRiskData] = useState(null);
   const [priceUnit, setPriceUnit] = useState('Rs./Quintal');
   const [arrivalUnit, setArrivalUnit] = useState('Metric Tonnes');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  // Load commodities
   useEffect(() => {
-    async function loadComms() {
-      try {
-        const comms = await fetchCommodities();
-        setCommodities(comms);
-        if (comms?.length > 0) {
-          const defaultCrop = comms.find((c) => c.commodity === 'Onion') || comms[0];
+    fetchForecastSupported()
+      .then((response) => {
+        const options = response.commodities || [];
+        setSupportedOptions(options);
+        const defaultCrop = options.find((option) => option.commodity === 'Onion') || options[0];
+        if (defaultCrop) {
           setSelectedCrop(defaultCrop.commodity);
-          setPriceUnit(defaultCrop.price_unit);
-          setArrivalUnit(defaultCrop.arrival_unit);
+          setSelectedMandi(defaultCrop.default_market);
         }
-      } catch (err) {
-        console.error('Failed to load commodities in Jokhim:', err);
-      }
-    }
-    loadComms();
+      })
+      .catch((err) => setError(err.message || 'Unable to load supported risk options.'))
+      .finally(() => setLoading(false));
   }, []);
 
-  // Load mandis for selected crop
   useEffect(() => {
-    async function loadMandisList() {
-      if (!selectedCrop) return;
-      try {
-        const mList = await fetchMandis({ commodity: selectedCrop });
-        setMandis(mList);
-        if (mList?.length > 0) {
-          const exists = mList.some((m) => m.market === selectedMandi);
-          if (!exists) setSelectedMandi(mList[0].market);
-        }
-      } catch (err) {
-        console.error('Failed to load mandis in Jokhim:', err);
-      }
-    }
-    loadMandisList();
-  }, [selectedCrop]);
+    const option = supportedOptions.find((item) => item.commodity === selectedCrop);
+    const supportedMandis = option?.markets?.map((market) => ({ market })) || [];
+    setMandis(supportedMandis);
+    if (option && !option.markets.includes(selectedMandi)) setSelectedMandi(option.default_market);
+  }, [selectedCrop, selectedMandi, supportedOptions]);
 
-  // Load weather and trend data for selected mandi
   useEffect(() => {
-    async function loadObservations() {
-      if (!selectedCrop || !selectedMandi) return;
-      try {
-        const [weatherRes, trendRes] = await Promise.all([
-          fetchWeatherSummary({ market: selectedMandi }),
-          fetchMarketTrends({ commodity: selectedCrop, market: selectedMandi, limit: 30 }),
-        ]);
-
-        if (weatherRes?.found) {
-          setWeatherSummary(weatherRes);
-        } else {
-          setWeatherSummary(null);
-        }
-
-        if (trendRes?.found) {
-          setTrendData(trendRes.data);
-          setPriceUnit(trendRes.price_unit);
-          setArrivalUnit(trendRes.arrival_unit);
-        } else {
-          setTrendData([]);
-        }
-      } catch (err) {
-        console.error('Failed to load Jokhim observations:', err);
-      }
-    }
-    loadObservations();
+    if (!selectedCrop || !selectedMandi) return;
+    setRiskData(null);
+    setError('');
+    analyzeJokhimRisk({ commodity: selectedCrop, market: selectedMandi })
+      .then((response) => {
+        setRiskData(response);
+        setPriceUnit(response.historical_coverage?.price_unit || 'Rs./Quintal');
+        setArrivalUnit(response.historical_coverage?.arrival_unit || 'Metric Tonnes');
+      })
+      .catch((err) => setError(err.message || 'Unable to load risk indicators.'));
   }, [selectedCrop, selectedMandi]);
 
-  // Calculate historical volatility metrics from real points
-  const prices = trendData.map((d) => d.modal_price).filter(Boolean);
-  const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
-  const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
-  const spreadPrice = maxPrice - minPrice;
-
-  const arrivals = trendData.map((d) => d.arrival_quantity).filter(Boolean);
-  const maxArrival = arrivals.length > 0 ? Math.max(...arrivals) : 0;
-  const minArrival = arrivals.length > 0 ? Math.min(...arrivals) : 0;
+  const price30 = riskData?.price_indicators?.last_30_trading_days;
+  const price7 = riskData?.price_indicators?.last_7_trading_days;
+  const arrivals = riskData?.arrival_indicators;
+  const weather = riskData?.weather_indicators;
+  const forecast = riskData?.ml_forecast;
+  const riskAnalysis = riskData?.risk_analysis;
 
   return (
     <div className="space-y-6">
@@ -124,8 +88,16 @@ export default function JokhimEngine() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 text-xs">
-          <label className="text-slate-500 font-medium">Select Mandi:</label>
+        <div className="flex flex-wrap items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 text-xs">
+          <label className="text-slate-500 font-medium">Select Crop:</label>
+          <select
+            value={selectedCrop}
+            onChange={(e) => setSelectedCrop(e.target.value)}
+            className="font-bold text-emerald-800 bg-transparent focus:outline-hidden"
+          >
+            {supportedOptions.map((option) => <option key={option.commodity} value={option.commodity}>{option.commodity}</option>)}
+          </select>
+          <label className="text-slate-500 font-medium ml-2">Select Mandi:</label>
           <select
             value={selectedMandi}
             onChange={(e) => setSelectedMandi(e.target.value)}
@@ -146,16 +118,48 @@ export default function JokhimEngine() {
           <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
           <div className="space-y-1">
             <h3 className="font-bold text-amber-950">
-              Predictive Risk Scoring Engine Disabled
+              Historical Risk + Forecast Context
             </h3>
             <p className="text-amber-800 leading-relaxed">
-              In accordance with our data guidelines, future risk prediction scores (e.g. price drop probability,
-              arrival flood probability) will remain disabled until the formal ML risk scoring logic is connected.
-              The panels below present <strong>actual observed historical fluctuations</strong> from the dataset.
+              The panels below are scoped to the selected model-supported crop and mandi. Risk indicators are historical
+              observations; the forecast dates and model status come from the same Bhavishya inference service.
             </p>
           </div>
         </div>
       </div>
+
+      {error && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-sm text-rose-800 flex items-start gap-2">
+          <AlertTriangle className="w-5 h-5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+      {loading || (selectedCrop && selectedMandi && !riskData && !error) ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 text-sm text-slate-500">Loading scoped risk observations...</div>
+      ) : null}
+      {riskData?.freshness?.is_stale && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900 flex items-start gap-2">
+          <AlertTriangle className="w-5 h-5 shrink-0" />
+          <span>{riskData.freshness.warning} Latest observation: {riskData.freshness.latest_observed_date}; data as of {riskData.freshness.data_as_of}.</span>
+        </div>
+      )}
+      {riskAnalysis && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2"><ShieldAlert className="w-5 h-5 text-emerald-600" /><h2 className="text-base font-bold text-slate-900">Risk Analysis ({selectedCrop})</h2></div>
+            {riskAnalysis.sufficient_data ? <Badge variant={riskAnalysis.overall_risk_level === 'HIGH' ? 'rose' : riskAnalysis.overall_risk_level === 'MODERATE' ? 'amber' : 'emerald'} size="sm">Overall {riskAnalysis.overall_risk_level} · {riskAnalysis.overall_risk_index}/100</Badge> : <Badge variant="amber" size="sm">Insufficient data</Badge>}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {riskAnalysis.risk_cards.map((card) => (
+              <div key={card.name} className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                <div className="flex items-center justify-between gap-2"><span className="text-xs font-bold text-slate-700">{card.name}</span><Badge variant={card.level === 'HIGH' ? 'rose' : card.level === 'MODERATE' ? 'amber' : card.level === 'LOW' ? 'emerald' : 'neutral'} size="xs">{card.level === 'INSUFFICIENT_DATA' ? 'No score' : `${card.level} ${card.score}/100`}</Badge></div>
+                <p className="text-[11px] text-slate-600 mt-2 leading-relaxed">{card.explanation}</p>
+              </div>
+            ))}
+          </div>
+          {riskAnalysis.warnings?.length > 0 && <div className="mt-3 text-xs text-amber-800">{riskAnalysis.warnings.length} model/data warning(s) apply to this analysis.</div>}
+        </div>
+      )}
 
       {/* Historical Weather Drivers Section */}
       <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs">
@@ -166,15 +170,15 @@ export default function JokhimEngine() {
               Station Weather Record History ({selectedMandi})
             </h2>
           </div>
-          {weatherSummary && (
+          {weather && (
             <Badge variant="neutral" size="sm">
               <Calendar className="w-3 h-3 text-slate-500" />
-              Observed {weatherSummary.date_range?.start} → {weatherSummary.date_range?.end}
+              Observed {weather.date_start} → {weather.date_end}
             </Badge>
           )}
         </div>
 
-        {weatherSummary ? (
+        {weather ? (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
               <div className="flex items-center gap-2 text-slate-500 text-xs font-semibold mb-2">
@@ -182,10 +186,10 @@ export default function JokhimEngine() {
                 Temperature Range
               </div>
               <div className="text-2xl font-extrabold text-slate-900">
-                {weatherSummary.temperature?.min_c}°C – {weatherSummary.temperature?.max_c}°C
+                {weather.temperature_min_c}°C – {weather.temperature_max_c}°C
               </div>
               <p className="text-[11px] text-slate-500 mt-1">
-                Historical mean: {weatherSummary.temperature?.mean_c}°C
+                Historical mean: {weather.temperature_mean_c}°C · σ {weather.temperature_standard_deviation_c}°C
               </p>
             </div>
 
@@ -195,10 +199,10 @@ export default function JokhimEngine() {
                 Precipitation History
               </div>
               <div className="text-2xl font-extrabold text-slate-900">
-                {weatherSummary.rainfall?.total_precipitation_mm} mm
+                {weather.rainfall_total_mm} mm
               </div>
               <p className="text-[11px] text-slate-500 mt-1">
-                {weatherSummary.rainfall?.rainy_days_count} rainy days (Peak: {weatherSummary.rainfall?.max_single_day_rain_mm} mm)
+                {weather.rainy_days_count} rainy days (Peak: {weather.maximum_single_day_rainfall_mm} mm)
               </p>
             </div>
 
@@ -208,10 +212,10 @@ export default function JokhimEngine() {
                 Relative Humidity Range
               </div>
               <div className="text-2xl font-extrabold text-slate-900">
-                {weatherSummary.humidity?.min_pct}% – {weatherSummary.humidity?.max_pct}%
+                {weather.humidity_min_pct}% – {weather.humidity_max_pct}%
               </div>
               <p className="text-[11px] text-slate-500 mt-1">
-                Historical mean: {weatherSummary.humidity?.mean_pct}%
+                Historical mean: {weather.humidity_mean_pct}%
               </p>
             </div>
           </div>
@@ -240,15 +244,19 @@ export default function JokhimEngine() {
           <div className="space-y-3 text-xs">
             <div className="flex justify-between py-1 border-b border-slate-100">
               <span className="text-slate-500">Minimum Recorded Price:</span>
-              <span className="font-bold text-slate-800">₹{minPrice.toLocaleString('en-IN')} {priceUnit}</span>
+              <span className="font-bold text-slate-800">₹{(price30?.min_price || 0).toLocaleString('en-IN')} {priceUnit}</span>
             </div>
             <div className="flex justify-between py-1 border-b border-slate-100">
               <span className="text-slate-500">Maximum Recorded Price:</span>
-              <span className="font-bold text-slate-800">₹{maxPrice.toLocaleString('en-IN')} {priceUnit}</span>
+              <span className="font-bold text-slate-800">₹{(price30?.max_price || 0).toLocaleString('en-IN')} {priceUnit}</span>
             </div>
             <div className="flex justify-between py-1">
               <span className="text-slate-500">Total Price Variance Spread:</span>
-              <span className="font-extrabold text-emerald-700">₹{spreadPrice.toLocaleString('en-IN')} {priceUnit}</span>
+              <span className="font-extrabold text-emerald-700">₹{((price30?.max_price || 0) - (price30?.min_price || 0)).toLocaleString('en-IN')} {priceUnit}</span>
+            </div>
+            <div className="flex justify-between py-1 border-t border-slate-100">
+              <span className="text-slate-500">7-day volatility / drops:</span>
+              <span className="font-semibold text-slate-600">{price7?.coefficient_of_variation_pct || 0}% CV · {price7?.price_drop_count || 0} drops</span>
             </div>
           </div>
         </div>
@@ -269,19 +277,42 @@ export default function JokhimEngine() {
           <div className="space-y-3 text-xs">
             <div className="flex justify-between py-1 border-b border-slate-100">
               <span className="text-slate-500">Lowest Daily Arrival:</span>
-              <span className="font-bold text-slate-800">{minArrival.toLocaleString('en-IN')} {arrivalUnit}</span>
+              <span className="font-bold text-slate-800">{(arrivals?.min_quantity || 0).toLocaleString('en-IN')} {arrivalUnit}</span>
             </div>
             <div className="flex justify-between py-1 border-b border-slate-100">
               <span className="text-slate-500">Peak Daily Arrival Surge:</span>
-              <span className="font-bold text-slate-800">{maxArrival.toLocaleString('en-IN')} {arrivalUnit}</span>
+              <span className="font-bold text-slate-800">{(arrivals?.max_quantity || 0).toLocaleString('en-IN')} {arrivalUnit}</span>
             </div>
             <div className="flex justify-between py-1">
               <span className="text-slate-500">Observation Points:</span>
-              <span className="font-semibold text-slate-600">{trendData.length} recorded auction dates</span>
+              <span className="font-semibold text-slate-600">{riskData?.historical_coverage?.observation_count || 0} recorded auction dates · {arrivals?.spike_count || 0} spikes</span>
             </div>
           </div>
         </div>
       </div>
+
+      {forecast && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 text-emerald-600" />
+              <h3 className="font-bold text-sm text-slate-900">Shared ML Forecast Context ({selectedCrop})</h3>
+            </div>
+            <Badge variant="neutral" size="xs">Origin {forecast.forecast_origin}</Badge>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+            {forecast.forecasts.map((item) => (
+              <div key={item.horizon_days} className="bg-slate-50 rounded-xl p-3 text-xs">
+                <div className="text-slate-500">{item.target_date}</div>
+                <div className="font-bold text-slate-900 mt-1">₹{item.prediction}</div>
+                <div className="text-slate-500 mt-1">{riskAnalysis?.forecasted_price_movement?.find((movement) => movement.horizon_days === item.horizon_days)?.change_from_latest_observed_pct ?? 0}% vs observed</div>
+                <div className="text-slate-500 mt-1">{item.status === 'validated_model' ? 'Validated model' : 'Baseline'}</div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-slate-500 mt-3">Forecasts are statistical estimates, not future weather observations or guaranteed prices.</p>
+        </div>
+      )}
     </div>
   );
 }

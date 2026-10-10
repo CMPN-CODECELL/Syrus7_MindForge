@@ -24,6 +24,8 @@ import DisclaimerBanner from '../components/DisclaimerBanner';
 import Badge from '../components/Badge';
 import {
   fetchCommodities,
+  fetchForecast,
+  fetchForecastSupported,
   fetchMandis,
   fetchMarketTrends,
   fetchWeatherSummary,
@@ -38,16 +40,24 @@ export default function BhavishyaForecast() {
   const [trendData, setTrendData] = useState([]);
   const [priceUnit, setPriceUnit] = useState('Rs./Quintal');
   const [weatherSummary, setWeatherSummary] = useState(null);
+  const [forecastSupported, setForecastSupported] = useState([]);
+  const [forecastResult, setForecastResult] = useState(null);
+  const [forecastError, setForecastError] = useState('');
 
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(false);
+  const [forecastLoading, setForecastLoading] = useState(false);
 
   useEffect(() => {
     async function loadInitial() {
       try {
         setLoading(true);
-        const comms = await fetchCommodities();
+        const [comms, supported] = await Promise.all([
+          fetchCommodities(),
+          fetchForecastSupported(),
+        ]);
         setCommodities(comms);
+        setForecastSupported(supported?.commodities || []);
         if (comms && comms.length > 0) {
           const defaultCrop = comms.find((c) => c.commodity === 'Onion') || comms[0];
           setSelectedCrop(defaultCrop.commodity);
@@ -112,7 +122,38 @@ export default function BhavishyaForecast() {
     loadTrends();
   }, [selectedCrop, selectedMandi]);
 
+  useEffect(() => {
+    async function loadForecast() {
+      const supportedCrop = forecastSupported.find((item) => item.commodity === selectedCrop);
+      if (!supportedCrop) {
+        setForecastResult(null);
+        setForecastError('This crop does not have an evaluated ML forecast yet.');
+        return;
+      }
+
+      try {
+        setForecastLoading(true);
+        setForecastError('');
+        const result = await fetchForecast({
+          commodity: selectedCrop,
+          market: supportedCrop.default_market,
+        });
+        setForecastResult(result);
+        setPriceUnit(result.price_unit);
+      } catch (err) {
+        setForecastResult(null);
+        setForecastError(err.message || 'Forecast service is unavailable.');
+      } finally {
+        setForecastLoading(false);
+      }
+    }
+
+    if (forecastSupported.length > 0 && selectedCrop) loadForecast();
+  }, [forecastSupported, selectedCrop]);
+
   const latestPoint = trendData[trendData.length - 1];
+  const staleWarning = forecastResult?.warnings?.find((warning) => warning.code === 'STALE_DATA');
+  const forecastReferenceDate = forecastResult?.reference_date;
 
   return (
     <div className="space-y-6">
@@ -131,22 +172,63 @@ export default function BhavishyaForecast() {
         </div>
       </div>
 
-      {/* Explicit ML Notice */}
-      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl text-amber-900 text-xs sm:text-sm">
+      {/* ML Forecast */}
+      <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-emerald-950 text-xs sm:text-sm">
         <div className="flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <Sparkles className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
           <div className="space-y-1">
-            <h3 className="font-bold text-amber-950">
-              ML Forecasting Engine Not Yet Connected
-            </h3>
-            <p className="text-amber-800 leading-relaxed">
-              In accordance with our strict data integrity policy, we do not fabricate 1–7 day forward
-              predictions. The chart below displays <strong>actual historical price observations</strong> from
-              the dataset for {selectedCrop} at {selectedMandi}. The time-series forecasting model
-              will be trained on this series in the upcoming ML phase.
+            <h3 className="font-bold">ML Forecasting Engine Connected</h3>
+            <p className="text-emerald-800 leading-relaxed">
+              Forecasts are served by the backend ML pipeline for evaluated crop and mandi pairs.
+              Historical observations below remain separate from predicted prices.
             </p>
           </div>
         </div>
+        {forecastResult && (
+          <div className="mt-3 text-slate-700 bg-white/70 border border-emerald-100 rounded-lg p-3">
+            <div>
+              Forecast origin: <strong>{forecastResult.forecast_origin}</strong> · Reference date:{' '}
+              <strong>{forecastResult.reference_date}</strong> · Last observed price:{' '}
+              <strong>₹{forecastResult.last_observed_price}</strong> on{' '}
+              <strong>{forecastResult.last_observed_date}</strong>
+            </div>
+            {staleWarning && (
+              <div className="mt-1 text-amber-800 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{staleWarning.message} This historical price is not today&apos;s live market price.</span>
+              </div>
+            )}
+          </div>
+        )}
+        {forecastLoading ? (
+          <div className="mt-4 text-emerald-700 flex items-center gap-2">
+            <RefreshCw className="w-4 h-4 animate-spin" /> Loading seven-day forecast...
+          </div>
+        ) : forecastError ? (
+          <div className="mt-4 text-amber-800 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" /> {forecastError}
+          </div>
+        ) : forecastResult ? (
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+            {forecastResult.forecasts.map((item) => (
+              (() => {
+                const isForwardForecast = item.target_date > forecastReferenceDate;
+                return (
+              <div key={item.horizon_days} className="bg-white border border-emerald-100 rounded-lg p-2">
+                <div className="text-[11px] text-slate-500">Day {item.horizon_days}</div>
+                <div className="font-bold text-slate-900">₹{item.prediction}</div>
+                <div className="text-[10px] text-slate-500">{item.target_date}</div>
+                <Badge variant={item.status === 'validated_model' ? 'emerald' : 'amber'} size="xs">
+                  {isForwardForecast
+                    ? item.status === 'validated_model' ? 'Forward forecast' : 'Baseline prediction'
+                    : 'Past target'}
+                </Badge>
+              </div>
+                );
+              })()
+            ))}
+          </div>
+        ) : null}
       </div>
 
       {/* Selectors */}
@@ -196,12 +278,12 @@ export default function BhavishyaForecast() {
               Observed Price Trajectory ({selectedCrop} @ {selectedMandi})
             </h2>
             <p className="text-xs text-slate-500">
-              Training data input series for forward forecasting ({priceUnit})
+              Historical observed prices only; not a live current-market quote ({priceUnit})
             </p>
           </div>
           {latestPoint && (
-            <Badge variant="emerald" size="sm">
-              Latest: ₹{latestPoint.modal_price} ({latestPoint.date})
+            <Badge variant={staleWarning ? 'amber' : 'emerald'} size="sm">
+              Latest observed: ₹{latestPoint.modal_price} ({latestPoint.date})
             </Badge>
           )}
         </div>

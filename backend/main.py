@@ -16,6 +16,9 @@ load_dotenv(backend_dir.parent / ".env")
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from data_loader import load_dataset, get_df
+from bechsmart_router import router as bechsmart_router
+from forecast_router import router as forecast_router
+from jokhim_router import router as jokhim_router
 from routers import market, weather, assistant
 
 
@@ -55,6 +58,9 @@ app.add_middleware(
 app.include_router(market.router)
 app.include_router(weather.router)
 app.include_router(assistant.router)
+app.include_router(forecast_router)
+app.include_router(jokhim_router)
+app.include_router(bechsmart_router)
 
 
 @app.get("/health", tags=["Health"])
